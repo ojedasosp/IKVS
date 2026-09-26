@@ -1,10 +1,10 @@
 use std::{
-    default,
-    io::{self, BufReader, Read},
+    io::{self, BufReader, BufWriter, Read, Write},
     net::TcpStream,
+    vec,
 };
 
-const SIMPLE: u8 = b'+';
+const STRING: u8 = b'+';
 const ERROR: u8 = b'-';
 const INT: u8 = b':';
 const BULK: u8 = b'$';
@@ -13,10 +13,10 @@ const ARRAY: u8 = b'*';
 #[derive(Debug, Default)]
 pub struct Value {
     pub typ: String,
-    str: String,
-    num: u32,
-    bulk: String,
-    array: Vec<Value>,
+    pub str: String,
+    pub num: i64,
+    pub bulk: String,
+    pub array: Vec<Value>,
 }
 
 impl Value {
@@ -25,6 +25,59 @@ impl Value {
             typ: String::from("null"),
             ..Default::default()
         }
+    }
+
+    pub fn marshal(&self) -> io::Result<Vec<u8>> {
+        return match self.typ.as_str() {
+            "array" => self.marshal_array(),
+            "bulk" => Ok(self.marshal_bulk()),
+            "string" => Ok(self.marshal_string()),
+            "null" => Ok(self.marshal_null()),
+            "error" => Ok(self.marshal_error()),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unknow type")),
+        };
+    }
+
+    fn marshal_string(&self) -> Vec<u8> {
+        let mut bytes = vec![STRING];
+        bytes.extend_from_slice(self.str.as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+        bytes
+    }
+
+    fn marshal_bulk(&self) -> Vec<u8> {
+        let mut bytes = vec![BULK];
+        bytes.extend_from_slice(self.bulk.len().to_string().as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+        bytes.extend_from_slice(self.bulk.as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+        bytes
+    }
+
+    fn marshal_array(&self) -> io::Result<Vec<u8>> {
+        let len = self.array.len();
+        let mut bytes = vec![ARRAY];
+        bytes.extend_from_slice(len.to_string().as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+
+        for i in 0..len {
+            bytes.extend_from_slice(self.array[i].marshal()?.as_slice());
+        }
+
+        Ok(bytes)
+    }
+
+    fn marshal_error(&self) -> Vec<u8> {
+        let mut bytes = vec![ERROR];
+        bytes.extend_from_slice(self.str.as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+        bytes
+    }
+
+    fn marshal_null(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(b"$-1\r\n");
+        bytes
     }
 }
 
@@ -35,13 +88,13 @@ fn invalid<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> io::Error
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
-pub struct Resp {
+pub struct Reader {
     reader: BufReader<TcpStream>,
 }
 
-impl Resp {
-    pub fn new(stream: TcpStream) -> Resp {
-        return Resp {
+impl Reader {
+    pub fn new(stream: TcpStream) -> Reader {
+        return Reader {
             reader: BufReader::new(stream),
         };
     }
@@ -112,5 +165,25 @@ impl Resp {
             bulk,
             ..Default::default()
         })
+    }
+}
+
+pub struct Writer {
+    writer: BufWriter<TcpStream>,
+}
+
+impl Writer {
+    pub fn new(stream: TcpStream) -> Writer {
+        return Writer {
+            writer: BufWriter::new(stream),
+        };
+    }
+
+    pub fn write(&mut self, v: Value) -> io::Result<()> {
+        let bytes = v.marshal()?;
+        eprintln!("sending: {:?}", String::from_utf8_lossy(&bytes));
+        self.writer.write_all(&bytes)?;
+        self.writer.flush()?;
+        Ok(())
     }
 }

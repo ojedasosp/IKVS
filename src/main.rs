@@ -1,11 +1,11 @@
 use std::{
-    io::{self, Write},
+    io::{self},
     net::{TcpListener, TcpStream},
     thread,
 };
 
 mod resp;
-use resp::Resp;
+use resp::{Reader, Value, Writer};
 
 fn main() -> io::Result<()> {
     let listener = match TcpListener::bind("127.0.0.1:6379") {
@@ -32,8 +32,8 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream) {
-    let reader = match stream.try_clone() {
+fn handle_client(stream: TcpStream) {
+    let rstream = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("couldn't clone stream: {e}");
@@ -41,10 +41,11 @@ fn handle_client(mut stream: TcpStream) {
         }
     };
 
-    let mut resp = Resp::new(reader);
+    let mut reader = Reader::new(rstream);
+    let mut writer = Writer::new(stream);
 
     loop {
-        let value = match resp.read() {
+        let value = match reader.read() {
             Ok(v) => v,
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(e) => {
@@ -53,9 +54,13 @@ fn handle_client(mut stream: TcpStream) {
             }
         };
 
-        print!("{value:#?}");
+        println!("{value:#?}");
 
-        if let Err(e) = stream.write(b"+OK\r\n") {
+        if let Err(e) = writer.write(Value {
+            typ: "string".to_string(),
+            str: "OK".to_string(),
+            ..Default::default()
+        }) {
             eprint!("error writing to client: {e}");
             break;
         }
