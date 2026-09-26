@@ -1,11 +1,15 @@
+mod handler;
+mod resp;
+
 use std::{
     io::{self},
     net::{TcpListener, TcpStream},
     thread,
 };
 
-mod resp;
 use resp::{Reader, Value, Writer};
+
+use crate::handler::HANDLERS;
 
 fn main() -> io::Result<()> {
     let listener = match TcpListener::bind("127.0.0.1:6379") {
@@ -54,13 +58,31 @@ fn handle_client(stream: TcpStream) {
             }
         };
 
+        if value.typ != "array".to_string() {
+            println!("Invalid request expected array");
+            continue;
+        }
+
+        if value.array.len() == 0 {
+            println!("Invalid request, expected array length > 0");
+            continue;
+        }
+
+        let command = value.array[0].bulk.to_uppercase();
+        let args = &value.array[1..];
+
+        let reply = match HANDLERS.get(command.as_str()) {
+            Some(handler) => handler(args),
+            None => Value {
+                typ: "error".to_string(),
+                str: format!("ERR unknow command: {command}"),
+                ..Default::default()
+            },
+        };
+
         println!("{value:#?}");
 
-        if let Err(e) = writer.write(Value {
-            typ: "string".to_string(),
-            str: "OK".to_string(),
-            ..Default::default()
-        }) {
+        if let Err(e) = writer.write(reply) {
             eprint!("error writing to client: {e}");
             break;
         }
