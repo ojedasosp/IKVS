@@ -12,23 +12,34 @@ This is a work in progress. Current progress against the guide:
 |---|---|---|
 | 1–2 | Introduction / First steps | ✅ |
 | 3 | Building the server | ✅ TCP server, one thread per connection |
-| 4 | Reading RESP | ✅ `Resp::read` parses arrays and bulk strings |
-| 5 | Writing RESP | ⬜ not started |
-| 6 | Redis commands (`PING`, `SET`, `GET`, `HSET`, ...) | ⬜ not started (`handler.rs` is a stub) |
+| 4 | Reading RESP | ✅ `Reader::read` parses arrays and bulk strings |
+| 5 | Writing RESP | ✅ `Writer::write` marshals strings, bulks, arrays, errors, and null |
+| 6 | Redis commands (`PING`, `SET`, `GET`, `HSET`, `HGET`, `HGETALL`) | ✅ dispatched through a command table in `handler.rs` |
 | 7 | Data persistence (AOF) | ⬜ not started (`aof.rs` is a stub) |
 | 8 | What's next | ⬜ |
 
-Right now the server accepts connections, parses incoming RESP values, prints them, and replies with a hardcoded `+OK\r\n` to every request. No commands are actually executed yet.
+The server accepts connections, parses incoming RESP requests, and dispatches them to real command handlers backed by an in-memory, thread-safe store (`RwLock<HashMap<...>>`). Unknown commands get a proper RESP error reply. Data is not persisted yet — everything lives in memory and is lost on restart.
 
 ## Project layout
 
 ```
 src/
 ├── main.rs      # TCP listener, one thread per client connection
-├── resp.rs      # RESP protocol parser (reading requests)
-├── handler.rs   # command dispatch/execution (WIP)
-└── aof.rs       # append-only file persistence (WIP)
+├── resp.rs      # RESP protocol: reading requests, writing replies
+├── handler.rs   # command table + in-memory DB/HDB (thread-safe via RwLock)
+└── aof.rs       # append-only file persistence (WIP, empty stub)
 ```
+
+## Supported commands
+
+| Command | Description |
+|---|---|
+| `PING [message]` | Replies with `PONG`, or echoes `message` if given |
+| `SET key value` | Stores `value` under `key` in the string store |
+| `GET key` | Returns the value stored under `key`, or an error if missing |
+| `HSET hash key value` | Stores `key`/`value` inside the hash named `hash` |
+| `HGET hash key` | Returns the value for `key` inside `hash`, or null if missing |
+| `HGETALL hash` | Returns all key/value pairs stored in `hash` as a flat array |
 
 ## Running it
 
@@ -42,13 +53,15 @@ You can talk to it with `redis-cli`, `nc`, or by sending a raw RESP array by han
 
 ```sh
 redis-cli -p 6379 ping
+redis-cli -p 6379 set foo bar
+redis-cli -p 6379 get foo
+redis-cli -p 6379 hset myhash field1 value1
+redis-cli -p 6379 hgetall myhash
 ```
 
 ```sh
 printf '*1\r\n$4\r\nPING\r\n' | nc 127.0.0.1 6379
 ```
-
-Since commands aren't implemented yet, every valid request currently just gets echoed to the server's stdout and answered with `+OK`.
 
 ## Why
 
