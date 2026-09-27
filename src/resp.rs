@@ -20,7 +20,7 @@ pub struct Value {
 }
 
 impl Value {
-    fn null() -> Value {
+    pub fn null() -> Value {
         Value {
             typ: String::from("null"),
             ..Default::default()
